@@ -6,9 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ============================================================
-# IMPORT PLOTLY COM MENSAGEM MAIS CLARA
-# ============================================================
 try:
     import plotly.express as px
     import plotly.graph_objects as go
@@ -19,6 +16,7 @@ except ModuleNotFoundError:
         "Adicione 'plotly' ao requirements.txt."
     )
     st.stop()
+
 
 # ============================================================
 # CONFIG
@@ -81,11 +79,13 @@ COLUNAS_MAP = {
 
 COLUNAS_ANALISE = ["ocorrido", "motivo", "justificativa"]
 
+
 # ============================================================
 # FUNÇÕES AUXILIARES
 # ============================================================
 def normalizar_nome_coluna(nome: str) -> str:
     return re.sub(r"\s+", " ", str(nome).strip())
+
 
 def encontrar_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
     mapa = {normalizar_nome_coluna(c): c for c in df.columns}
@@ -94,6 +94,7 @@ def encontrar_coluna(df: pd.DataFrame, aliases: list[str]) -> str | None:
         if chave in mapa:
             return mapa[chave]
     return None
+
 
 def padronizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -107,7 +108,6 @@ def padronizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.rename(columns=renomear)
 
-    # Garante colunas esperadas
     for col in [
         "tipo_plano",
         "data_inclusao",
@@ -123,6 +123,7 @@ def padronizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+
 def limpar_texto_serie(serie: pd.Series) -> pd.Series:
     return (
         serie.fillna("")
@@ -133,14 +134,8 @@ def limpar_texto_serie(serie: pd.Series) -> pd.Series:
         .replace("", np.nan)
     )
 
+
 def extrair_mes_arquivo(nome_arquivo: str) -> str | None:
-    """
-    Extrai mês do nome do arquivo no padrão MM-AA.
-    Exemplos aceitos:
-    01-26.xlsx
-    base_02-26.xls
-    dados_03-26_final.xlsx
-    """
     match = re.search(r"(?<!\d)(\d{2})-(\d{2})(?!\d)", nome_arquivo)
     if not match:
         return None
@@ -154,6 +149,7 @@ def extrair_mes_arquivo(nome_arquivo: str) -> str | None:
 
     return f"{ano:04d}-{mes:02d}"
 
+
 @st.cache_data(show_spinner=False)
 def carregar_arquivo(uploaded_file) -> tuple[pd.DataFrame, list[str]]:
     erros = []
@@ -165,18 +161,17 @@ def carregar_arquivo(uploaded_file) -> tuple[pd.DataFrame, list[str]]:
 
     df = padronizar_colunas(df)
 
-    # Limpeza de texto
     for col in ["tipo_plano", "justificativa", "ocorrido", "motivo", "observacao"]:
         df[col] = limpar_texto_serie(df[col])
 
-    # Data sempre baseada na coluna Inclusão Req. HBIS
+    # Data real usada em toda análise temporal
     df["data_inclusao"] = pd.to_datetime(df["data_inclusao"], errors="coerce")
 
-    # Mês analítico REAL, sempre pela data de inclusão
-    df["mes_analise"] = df["data_inclusao"].dt.to_period("M").astype(str)
+    # Mês analítico como datetime no 1º dia do mês
+    df["mes_analise"] = df["data_inclusao"].dt.to_period("M").dt.to_timestamp()
     df.loc[df["data_inclusao"].isna(), "mes_analise"] = np.nan
 
-    # Mês do nome do arquivo apenas para auditoria
+    # Mês do arquivo apenas para auditoria
     mes_ref = extrair_mes_arquivo(uploaded_file.name)
     if mes_ref is None:
         erros.append(
@@ -189,7 +184,6 @@ def carregar_arquivo(uploaded_file) -> tuple[pd.DataFrame, list[str]]:
 
     df["arquivo_origem"] = uploaded_file.name
 
-    # Aviso de data inválida
     qtd_data_invalida = df["data_inclusao"].isna().sum()
     if qtd_data_invalida > 0:
         erros.append(
@@ -198,6 +192,7 @@ def carregar_arquivo(uploaded_file) -> tuple[pd.DataFrame, list[str]]:
         )
 
     return df, erros
+
 
 def tabela_top(df: pd.DataFrame, coluna: str) -> pd.DataFrame:
     base = df[df[coluna].notna()].copy()
@@ -209,6 +204,7 @@ def tabela_top(df: pd.DataFrame, coluna: str) -> pd.DataFrame:
     out["percentual"] = (out["qtd"] / out["qtd"].sum() * 100).round(2)
     return out
 
+
 def montar_pareto(df: pd.DataFrame, coluna: str = "motivo") -> pd.DataFrame:
     base = tabela_top(df, coluna)
     if base.empty:
@@ -216,6 +212,7 @@ def montar_pareto(df: pd.DataFrame, coluna: str = "motivo") -> pd.DataFrame:
 
     base["percentual_acumulado"] = base["percentual"].cumsum().round(2)
     return base
+
 
 def grafico_barras_horizontal(df_top: pd.DataFrame, categoria: str, titulo: str):
     if df_top.empty:
@@ -235,6 +232,7 @@ def grafico_barras_horizontal(df_top: pd.DataFrame, categoria: str, titulo: str)
         height=max(400, 60 * len(df_top))
     )
     st.plotly_chart(fig, use_container_width=True)
+
 
 def grafico_pareto(df_pareto: pd.DataFrame, categoria: str = "motivo"):
     if df_pareto.empty:
@@ -271,6 +269,7 @@ def grafico_pareto(df_pareto: pd.DataFrame, categoria: str = "motivo"):
 
     st.plotly_chart(fig, use_container_width=True)
 
+
 def grafico_evolucao_mensal(df: pd.DataFrame):
     if df.empty or df["mes_analise"].dropna().empty:
         st.info("Sem dados para evolução mensal.")
@@ -284,20 +283,33 @@ def grafico_evolucao_mensal(df: pd.DataFrame):
         .sort_values("mes_analise")
     )
 
+    evol["mes_label"] = evol["mes_analise"].dt.strftime("%m/%Y")
+
     fig = px.bar(
         evol,
-        x="mes_analise",
+        x="mes_label",
         y="qtd",
         text="qtd",
         title='Evolução por Mês (base: coluna "Inclusão  Req. HBIS")'
     )
+
+    fig.update_layout(
+        xaxis_title="Mês",
+        yaxis_title="Quantidade",
+        xaxis_type="category"
+    )
+
     st.plotly_chart(fig, use_container_width=True)
+
 
 def exportar_excel(df_base: pd.DataFrame) -> bytes:
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_base.to_excel(writer, sheet_name="base_consolidada", index=False)
+        base_export = df_base.copy()
+        if "mes_analise" in base_export.columns:
+            base_export["mes_analise"] = pd.to_datetime(base_export["mes_analise"]).dt.strftime("%m/%Y")
+        base_export.to_excel(writer, sheet_name="base_consolidada", index=False)
 
         for col in COLUNAS_ANALISE:
             tabela = (
@@ -307,6 +319,7 @@ def exportar_excel(df_base: pd.DataFrame) -> bytes:
                 .rename(columns={"size": "qtd"})
                 .sort_values(["mes_analise", "qtd"], ascending=[True, False])
             )
+            tabela["mes_analise"] = pd.to_datetime(tabela["mes_analise"]).dt.strftime("%m/%Y")
             nome_aba = f"{col}_mes"[:31]
             tabela.to_excel(writer, sheet_name=nome_aba, index=False)
 
@@ -317,16 +330,25 @@ def exportar_excel(df_base: pd.DataFrame) -> bytes:
             .rename(columns={"size": "qtd"})
             .sort_values(["mes_analise", "qtd"], ascending=[True, False])
         )
+        pareto["mes_analise"] = pd.to_datetime(pareto["mes_analise"]).dt.strftime("%m/%Y")
         pareto.to_excel(writer, sheet_name="pareto_motivos", index=False)
 
         divergencias = df_base[
             df_base["mes_ref_arquivo"].notna()
             & df_base["mes_analise"].notna()
-            & (df_base["mes_ref_arquivo"] != df_base["mes_analise"])
+            & (
+                df_base["mes_ref_arquivo"]
+                != pd.to_datetime(df_base["mes_analise"]).dt.strftime("%Y-%m")
+            )
         ].copy()
+
+        if not divergencias.empty:
+            divergencias["mes_analise"] = pd.to_datetime(divergencias["mes_analise"]).dt.strftime("%m/%Y")
+
         divergencias.to_excel(writer, sheet_name="divergencias_mes", index=False)
 
     return output.getvalue()
+
 
 # ============================================================
 # SIDEBAR
@@ -352,6 +374,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Colunas esperadas**")
     st.caption('Ocorrido, Motivo, Justificativa e "Inclusão  Req. HBIS".')
+
 
 # ============================================================
 # CARGA E CONSOLIDAÇÃO
@@ -380,18 +403,19 @@ if not frames:
 
 df = pd.concat(frames, ignore_index=True)
 
-# Mantém apenas linhas com mês analítico válido
 df = df[df["mes_analise"].notna()].copy()
 
 if df.empty:
     st.error('Nenhum registro possui data válida na coluna "Inclusão  Req. HBIS".')
     st.stop()
 
-# Detecta divergências entre nome do arquivo e data real
 divergentes = df[
     df["mes_ref_arquivo"].notna()
     & df["mes_analise"].notna()
-    & (df["mes_ref_arquivo"] != df["mes_analise"])
+    & (
+        df["mes_ref_arquivo"]
+        != pd.to_datetime(df["mes_analise"]).dt.strftime("%Y-%m")
+    )
 ].copy()
 
 if not divergentes.empty:
@@ -401,6 +425,7 @@ if not divergentes.empty:
     )
 
 meses_disponiveis = sorted(df["mes_analise"].dropna().unique().tolist())
+
 
 # ============================================================
 # FILTROS
@@ -413,7 +438,8 @@ with col1:
     meses_selecionados = st.multiselect(
         "Meses",
         options=meses_disponiveis,
-        default=meses_disponiveis
+        default=meses_disponiveis,
+        format_func=lambda x: pd.to_datetime(x).strftime("%m/%Y")
     )
 
 with col2:
@@ -436,6 +462,7 @@ if df_filtrado.empty:
     st.warning("Nenhum dado encontrado com os filtros selecionados.")
     st.stop()
 
+
 # ============================================================
 # KPIs
 # ============================================================
@@ -447,11 +474,13 @@ k2.metric("Meses analisados", len(df_filtrado["mes_analise"].dropna().unique()))
 k3.metric("Arquivos carregados", df_filtrado["arquivo_origem"].nunique())
 k4.metric("Tipos de plano", df_filtrado["tipo_plano"].nunique())
 
+
 # ============================================================
 # EVOLUÇÃO MENSAL
 # ============================================================
 st.subheader("Evolução por Mês")
 grafico_evolucao_mensal(df_filtrado)
+
 
 # ============================================================
 # ANÁLISE POR MÊS
@@ -459,11 +488,15 @@ grafico_evolucao_mensal(df_filtrado)
 st.subheader("Análises por Mês")
 
 if meses_selecionados:
-    abas = st.tabs([f"📅 {mes}" for mes in meses_selecionados])
+    abas = st.tabs([
+        f"📅 {pd.to_datetime(mes).strftime('%m/%Y')}"
+        for mes in meses_selecionados
+    ])
 
     for aba, mes in zip(abas, meses_selecionados):
         with aba:
             base_mes = df_filtrado[df_filtrado["mes_analise"] == mes].copy()
+            mes_label = pd.to_datetime(mes).strftime("%m/%Y")
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Registros no mês", len(base_mes))
@@ -481,18 +514,18 @@ if meses_selecionados:
 
             with col_a:
                 st.markdown("### Ocorridos")
-                grafico_barras_horizontal(top_ocorridos, "ocorrido", f"Top {top_n} Ocorridos - {mes}")
+                grafico_barras_horizontal(top_ocorridos, "ocorrido", f"Top {top_n} Ocorridos - {mes_label}")
                 with st.expander("Ver tabela completa de Ocorridos"):
                     st.dataframe(tabela_top(base_mes, "ocorrido"), use_container_width=True)
 
             with col_b:
                 st.markdown("### Motivos")
-                grafico_barras_horizontal(top_motivos, "motivo", f"Top {top_n} Motivos - {mes}")
+                grafico_barras_horizontal(top_motivos, "motivo", f"Top {top_n} Motivos - {mes_label}")
                 with st.expander("Ver tabela completa de Motivos"):
                     st.dataframe(tabela_top(base_mes, "motivo"), use_container_width=True)
 
             st.markdown("### Justificativa")
-            grafico_barras_horizontal(top_just, "justificativa", f"Top {top_n} Justificativas - {mes}")
+            grafico_barras_horizontal(top_just, "justificativa", f"Top {top_n} Justificativas - {mes_label}")
             with st.expander("Ver tabela completa de Justificativas"):
                 st.dataframe(tabela_top(base_mes, "justificativa"), use_container_width=True)
 
@@ -500,6 +533,7 @@ if meses_selecionados:
             grafico_pareto(pareto.head(max(top_n, 10)))
             with st.expander("Ver tabela completa do Pareto"):
                 st.dataframe(pareto, use_container_width=True)
+
 
 # ============================================================
 # ANÁLISE CONSOLIDADA
@@ -534,6 +568,7 @@ with tab4:
     with st.expander("Ver tabela completa"):
         st.dataframe(base, use_container_width=True)
 
+
 # ============================================================
 # DIAGNÓSTICOS
 # ============================================================
@@ -557,8 +592,10 @@ with st.expander("Divergência entre nome do arquivo e data da coluna"):
     if divergentes.empty:
         st.success("Nenhuma divergência encontrada.")
     else:
+        divergentes_exibir = divergentes.copy()
+        divergentes_exibir["mes_analise"] = pd.to_datetime(divergentes_exibir["mes_analise"]).dt.strftime("%m/%Y")
         st.dataframe(
-            divergentes[
+            divergentes_exibir[
                 [
                     "arquivo_origem",
                     "mes_ref_arquivo",
@@ -572,6 +609,7 @@ with st.expander("Divergência entre nome do arquivo e data da coluna"):
             ],
             use_container_width=True
         )
+
 
 # ============================================================
 # EXPORTAÇÃO
